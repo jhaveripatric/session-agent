@@ -1,0 +1,22 @@
+name: session-agent
+
+health:
+  port: 8081
+  path: /health
+
+logging:
+  level: info
+  format: json
+
+amqp:
+  url: amqp://guest:guest@localhost:5672/
+  exchange: agenteco.events
+  queue: session-agent
+
+jwt:
+  secret: change-this-in-production
+  issuer: agenteco
+  expiry_mins: 60
+
+store:
+  path: ./sessions.db

@@ -1,0 +1,40 @@
+name: session-agent
+version: 1.0.0
+description: JWT session management agent for authentication
+category: security
+license: MIT
+repository: https://github.com/jhaveripatric/session-agent
+
+author:
+  name: jhaveripatric
+  email: pratik@agenteco.io
+
+events:
+  subscribes:
+    - io.agenteco.auth.login.requested.v1
+    - io.agenteco.auth.session.validate.v1
+    - io.agenteco.auth.logout.requested.v1
+  publishes:
+    - io.agenteco.auth.session.created.v1
+    - io.agenteco.auth.session.invalid.v1
+    - io.agenteco.auth.session.valid.v1
+
+dependencies:
+  - rabbitmq
+
+config:
+  - name: JWT_SECRET
+    required: true
+    description: Secret key for JWT signing
+  - name: JWT_ISSUER
+    default: agenteco
+    description: JWT issuer claim
+  - name: JWT_EXPIRY_MINS
+    default: "60"
+    description: Token expiry in minutes
+
+tags:
+  - authentication
+  - jwt
+  - session
+  - security
