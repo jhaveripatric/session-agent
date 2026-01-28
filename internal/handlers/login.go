@@ -48,6 +48,10 @@ type LogoutRequest struct {
 	Token string `json:"token"`
 }
 
+type LogoutResponse struct {
+	Success bool `json:"success"`
+}
+
 type LoginHandler struct {
 	sessSvc   *service.SessionService
 	publisher events.Publisher
@@ -58,10 +62,10 @@ func NewLoginHandler(sessSvc *service.SessionService, pub events.Publisher, log 
 	return &LoginHandler{sessSvc: sessSvc, publisher: pub, logger: log}
 }
 
-func (h *LoginHandler) HandleLogin(ctx context.Context, event *events.Event) error {
+func (h *LoginHandler) HandleLogin(ctx context.Context, request *events.Event) error {
 	var req LoginRequest
-	if err := unmarshalData(event.Data, &req); err != nil {
-		return h.emitInvalid(ctx, "invalid request format")
+	if err := unmarshalData(request.Data, &req); err != nil {
+		return h.replyInvalid(ctx, request, "invalid request format")
 	}
 
 	h.logger.InfoContext(ctx, "login request", "username", req.Username, "client_ip", req.ClientIP)
@@ -80,31 +84,34 @@ func (h *LoginHandler) HandleLogin(ctx context.Context, event *events.Event) err
 	session, err := h.sessSvc.CreateSession(ctx, userID, req.Username, roles, req.ClientIP)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "failed to create session", "error", err)
-		return h.emitInvalid(ctx, "session creation failed")
+		return h.replyInvalid(ctx, request, "session creation failed")
 	}
 
-	return h.emitCreated(ctx, SessionCreated{
+	response := events.NewEvent("io.agenteco.auth.session.created.v1", "session-agent")
+	response.WithData(SessionCreated{
 		UserID:    session.UserID,
 		Username:  req.Username,
 		Roles:     session.Roles,
 		Token:     session.Token,
 		ExpiresAt: session.ExpiresAt,
 	})
+
+	return h.publisher.Reply(ctx, request, response)
 }
 
-func (h *LoginHandler) HandleValidate(ctx context.Context, event *events.Event) error {
+func (h *LoginHandler) HandleValidate(ctx context.Context, request *events.Event) error {
 	var req ValidateRequest
-	if err := unmarshalData(event.Data, &req); err != nil {
-		return h.emitValidateResponse(ctx, ValidateResponse{Valid: false, Reason: "invalid request"})
+	if err := unmarshalData(request.Data, &req); err != nil {
+		return h.replyValidate(ctx, request, ValidateResponse{Valid: false, Reason: "invalid request"})
 	}
 
 	session, err := h.sessSvc.ValidateSession(ctx, req.Token)
 	if err != nil {
 		h.logger.DebugContext(ctx, "session validation failed", "error", err)
-		return h.emitValidateResponse(ctx, ValidateResponse{Valid: false, Reason: err.Error()})
+		return h.replyValidate(ctx, request, ValidateResponse{Valid: false, Reason: err.Error()})
 	}
 
-	return h.emitValidateResponse(ctx, ValidateResponse{
+	return h.replyValidate(ctx, request, ValidateResponse{
 		Valid:     true,
 		UserID:    session.UserID,
 		Username:  session.Username,
@@ -113,40 +120,41 @@ func (h *LoginHandler) HandleValidate(ctx context.Context, event *events.Event) 
 	})
 }
 
-func (h *LoginHandler) HandleLogout(ctx context.Context, event *events.Event) error {
+func (h *LoginHandler) HandleLogout(ctx context.Context, request *events.Event) error {
 	var req LogoutRequest
-	if err := unmarshalData(event.Data, &req); err != nil {
-		return nil
+	if err := unmarshalData(request.Data, &req); err != nil {
+		return h.replyLogout(ctx, request, false)
 	}
 
 	if err := h.sessSvc.InvalidateSession(ctx, req.Token); err != nil {
 		h.logger.ErrorContext(ctx, "failed to invalidate session", "error", err)
+		return h.replyLogout(ctx, request, false)
 	}
 
 	h.logger.InfoContext(ctx, "session invalidated")
-	return nil
+	return h.replyLogout(ctx, request, true)
 }
 
-func (h *LoginHandler) emitCreated(ctx context.Context, data SessionCreated) error {
-	event := events.NewEvent("io.agenteco.auth.session.created.v1", "session-agent")
-	event.WithData(data)
-	return h.publisher.Publish(ctx, event)
+func (h *LoginHandler) replyInvalid(ctx context.Context, request *events.Event, reason string) error {
+	response := events.NewEvent("io.agenteco.auth.session.invalid.v1", "session-agent")
+	response.WithData(SessionInvalid{Reason: reason})
+	return h.publisher.Reply(ctx, request, response)
 }
 
-func (h *LoginHandler) emitInvalid(ctx context.Context, reason string) error {
-	event := events.NewEvent("io.agenteco.auth.session.invalid.v1", "session-agent")
-	event.WithData(SessionInvalid{Reason: reason})
-	return h.publisher.Publish(ctx, event)
-}
-
-func (h *LoginHandler) emitValidateResponse(ctx context.Context, resp ValidateResponse) error {
+func (h *LoginHandler) replyValidate(ctx context.Context, request *events.Event, resp ValidateResponse) error {
 	eventType := "io.agenteco.auth.session.valid.v1"
 	if !resp.Valid {
 		eventType = "io.agenteco.auth.session.invalid.v1"
 	}
-	event := events.NewEvent(eventType, "session-agent")
-	event.WithData(resp)
-	return h.publisher.Publish(ctx, event)
+	response := events.NewEvent(eventType, "session-agent")
+	response.WithData(resp)
+	return h.publisher.Reply(ctx, request, response)
+}
+
+func (h *LoginHandler) replyLogout(ctx context.Context, request *events.Event, success bool) error {
+	response := events.NewEvent("io.agenteco.auth.session.ended.v1", "session-agent")
+	response.WithData(LogoutResponse{Success: success})
+	return h.publisher.Reply(ctx, request, response)
 }
 
 func unmarshalData(data any, v any) error {
