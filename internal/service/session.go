@@ -18,6 +18,8 @@ var (
 type Session struct {
 	ID        string
 	UserID    string
+	Username  string
+	Roles     []string
 	Token     string
 	ClientIP  string
 	CreatedAt time.Time
@@ -33,8 +35,8 @@ func NewSessionService(s *store.SQLiteStore, j *JWTService) *SessionService {
 	return &SessionService{store: s, jwtSvc: j}
 }
 
-func (s *SessionService) CreateSession(ctx context.Context, userID, username, clientIP string) (*Session, error) {
-	token, expiresAt, err := s.jwtSvc.Generate(userID, username)
+func (s *SessionService) CreateSession(ctx context.Context, userID, username string, roles []string, clientIP string) (*Session, error) {
+	tokenPair, err := s.jwtSvc.Generate(userID, username, roles)
 	if err != nil {
 		return nil, err
 	}
@@ -42,10 +44,10 @@ func (s *SessionService) CreateSession(ctx context.Context, userID, username, cl
 	sess := &store.Session{
 		ID:        uuid.New().String(),
 		UserID:    userID,
-		Token:     token,
+		Token:     tokenPair.AccessToken,
 		ClientIP:  clientIP,
 		CreatedAt: time.Now(),
-		ExpiresAt: expiresAt,
+		ExpiresAt: tokenPair.ExpiresAt,
 	}
 
 	if err := s.store.SaveSession(ctx, sess); err != nil {
@@ -55,6 +57,8 @@ func (s *SessionService) CreateSession(ctx context.Context, userID, username, cl
 	return &Session{
 		ID:        sess.ID,
 		UserID:    sess.UserID,
+		Username:  username,
+		Roles:     roles,
 		Token:     sess.Token,
 		ClientIP:  sess.ClientIP,
 		CreatedAt: sess.CreatedAt,
@@ -80,6 +84,8 @@ func (s *SessionService) ValidateSession(ctx context.Context, token string) (*Se
 	return &Session{
 		ID:        sess.ID,
 		UserID:    claims.UserID,
+		Username:  claims.Username,
+		Roles:     claims.Roles,
 		Token:     sess.Token,
 		ClientIP:  sess.ClientIP,
 		CreatedAt: sess.CreatedAt,

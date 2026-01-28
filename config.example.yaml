@@ -14,9 +14,14 @@ amqp:
   queue: session-agent
 
 jwt:
-  secret: change-this-in-production
+  algorithm: ES256
+  private_key_path: ./keys/private.pem
+  public_key_path: ./keys/public.pem
   issuer: agenteco
-  expiry_mins: 60
+  audience: agent-gateway
+  key_id: session-agent-v1
+  access_expiry: 15m
+  refresh_expiry: 168h  # 7 days
 
 store:
   path: ./sessions.db

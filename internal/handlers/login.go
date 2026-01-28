@@ -12,15 +12,17 @@ import (
 )
 
 type LoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	ClientIP string `json:"client_ip"`
-	UserID   string `json:"user_id,omitempty"`
+	Username string   `json:"username"`
+	Password string   `json:"password"`
+	ClientIP string   `json:"_client_ip"`
+	UserID   string   `json:"user_id,omitempty"`
+	Roles    []string `json:"roles,omitempty"`
 }
 
 type SessionCreated struct {
 	UserID    string    `json:"user_id"`
 	Username  string    `json:"username"`
+	Roles     []string  `json:"roles,omitempty"`
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
@@ -34,10 +36,12 @@ type ValidateRequest struct {
 }
 
 type ValidateResponse struct {
-	Valid     bool   `json:"valid"`
-	UserID    string `json:"user_id,omitempty"`
-	ExpiresAt string `json:"expires_at,omitempty"`
-	Reason    string `json:"reason,omitempty"`
+	Valid     bool     `json:"valid"`
+	UserID    string   `json:"user_id,omitempty"`
+	Username  string   `json:"username,omitempty"`
+	Roles     []string `json:"roles,omitempty"`
+	ExpiresAt string   `json:"expires_at,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
 }
 
 type LogoutRequest struct {
@@ -67,7 +71,13 @@ func (h *LoginHandler) HandleLogin(ctx context.Context, event *events.Event) err
 		userID = uuid.New().String()
 	}
 
-	session, err := h.sessSvc.CreateSession(ctx, userID, req.Username, req.ClientIP)
+	// Default roles if not specified
+	roles := req.Roles
+	if len(roles) == 0 {
+		roles = []string{"user"}
+	}
+
+	session, err := h.sessSvc.CreateSession(ctx, userID, req.Username, roles, req.ClientIP)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "failed to create session", "error", err)
 		return h.emitInvalid(ctx, "session creation failed")
@@ -76,6 +86,7 @@ func (h *LoginHandler) HandleLogin(ctx context.Context, event *events.Event) err
 	return h.emitCreated(ctx, SessionCreated{
 		UserID:    session.UserID,
 		Username:  req.Username,
+		Roles:     session.Roles,
 		Token:     session.Token,
 		ExpiresAt: session.ExpiresAt,
 	})
@@ -96,6 +107,8 @@ func (h *LoginHandler) HandleValidate(ctx context.Context, event *events.Event) 
 	return h.emitValidateResponse(ctx, ValidateResponse{
 		Valid:     true,
 		UserID:    session.UserID,
+		Username:  session.Username,
+		Roles:     session.Roles,
 		ExpiresAt: session.ExpiresAt.Format(time.RFC3339),
 	})
 }

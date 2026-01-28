@@ -2,11 +2,15 @@ package agent
 
 import (
 	"context"
+	"log"
 	"os"
+	"path/filepath"
+	"time"
 
 	"github.com/jhaveripatric/go-agent-kit/events"
 	"github.com/jhaveripatric/go-agent-kit/lifecycle"
 	"github.com/jhaveripatric/go-agent-kit/observability"
+	"github.com/jhaveripatric/session-agent/internal/crypto"
 	"github.com/jhaveripatric/session-agent/internal/handlers"
 	"github.com/jhaveripatric/session-agent/internal/service"
 	"github.com/jhaveripatric/session-agent/internal/store"
@@ -14,11 +18,11 @@ import (
 )
 
 type Config struct {
-	Name    string                     `yaml:"name"`
+	Name    string                      `yaml:"name"`
 	Logging observability.LoggingConfig `yaml:"logging"`
-	AMQP    AMQPConfig                 `yaml:"amqp"`
-	JWT     JWTConfig                  `yaml:"jwt"`
-	Store   StoreConfig                `yaml:"store"`
+	AMQP    AMQPConfig                  `yaml:"amqp"`
+	JWT     JWTConfig                   `yaml:"jwt"`
+	Store   StoreConfig                 `yaml:"store"`
 }
 
 type AMQPConfig struct {
@@ -28,9 +32,14 @@ type AMQPConfig struct {
 }
 
 type JWTConfig struct {
-	Secret     string `yaml:"secret"`
-	Issuer     string `yaml:"issuer"`
-	ExpiryMins int    `yaml:"expiry_mins"`
+	Algorithm      string `yaml:"algorithm"`
+	PrivateKeyPath string `yaml:"private_key_path"`
+	PublicKeyPath  string `yaml:"public_key_path"`
+	Issuer         string `yaml:"issuer"`
+	Audience       string `yaml:"audience"`
+	KeyID          string `yaml:"key_id"`
+	AccessExpiry   string `yaml:"access_expiry"`
+	RefreshExpiry  string `yaml:"refresh_expiry"`
 }
 
 type StoreConfig struct {
@@ -60,6 +69,12 @@ func New(configPath string) (*Agent, error) {
 	}
 
 	setDefaults(&cfg)
+
+	// Ensure keys exist
+	if err := ensureKeys(&cfg); err != nil {
+		return nil, err
+	}
+
 	return &Agent{config: cfg}, nil
 }
 
@@ -67,12 +82,53 @@ func setDefaults(cfg *Config) {
 	if cfg.Name == "" {
 		cfg.Name = "session-agent"
 	}
-	if cfg.JWT.ExpiryMins == 0 {
-		cfg.JWT.ExpiryMins = 60
+	if cfg.JWT.Algorithm == "" {
+		cfg.JWT.Algorithm = "ES256"
+	}
+	if cfg.JWT.PrivateKeyPath == "" {
+		cfg.JWT.PrivateKeyPath = "./keys/private.pem"
+	}
+	if cfg.JWT.PublicKeyPath == "" {
+		cfg.JWT.PublicKeyPath = "./keys/public.pem"
+	}
+	if cfg.JWT.Issuer == "" {
+		cfg.JWT.Issuer = "agenteco"
+	}
+	if cfg.JWT.Audience == "" {
+		cfg.JWT.Audience = "agent-gateway"
+	}
+	if cfg.JWT.KeyID == "" {
+		cfg.JWT.KeyID = "session-agent-v1"
+	}
+	if cfg.JWT.AccessExpiry == "" {
+		cfg.JWT.AccessExpiry = "15m"
+	}
+	if cfg.JWT.RefreshExpiry == "" {
+		cfg.JWT.RefreshExpiry = "168h"
 	}
 	if cfg.Store.Path == "" {
 		cfg.Store.Path = "./sessions.db"
 	}
+}
+
+func ensureKeys(cfg *Config) error {
+	privateKeyPath := cfg.JWT.PrivateKeyPath
+	publicKeyPath := cfg.JWT.PublicKeyPath
+
+	if _, err := os.Stat(privateKeyPath); os.IsNotExist(err) {
+		log.Println("Generating ES256 key pair...")
+
+		// Create keys directory
+		if err := os.MkdirAll(filepath.Dir(privateKeyPath), 0700); err != nil {
+			return err
+		}
+
+		if err := crypto.GenerateKeyPair(privateKeyPath, publicKeyPath); err != nil {
+			return err
+		}
+		log.Printf("Keys generated: %s, %s", privateKeyPath, publicKeyPath)
+	}
+	return nil
 }
 
 func (a *Agent) Name() string { return a.config.Name }
@@ -86,7 +142,28 @@ func (a *Agent) Start(ctx context.Context) error {
 		return err
 	}
 
-	a.jwtSvc = service.NewJWTService(a.config.JWT.Secret, a.config.JWT.Issuer, a.config.JWT.ExpiryMins)
+	// Parse durations
+	accessExpiry, err := time.ParseDuration(a.config.JWT.AccessExpiry)
+	if err != nil {
+		accessExpiry = 15 * time.Minute
+	}
+	refreshExpiry, err := time.ParseDuration(a.config.JWT.RefreshExpiry)
+	if err != nil {
+		refreshExpiry = 168 * time.Hour
+	}
+
+	a.jwtSvc, err = service.NewJWTService(service.JWTConfig{
+		PrivateKeyPath: a.config.JWT.PrivateKeyPath,
+		Issuer:         a.config.JWT.Issuer,
+		Audience:       a.config.JWT.Audience,
+		KeyID:          a.config.JWT.KeyID,
+		AccessExpiry:   accessExpiry,
+		RefreshExpiry:  refreshExpiry,
+	})
+	if err != nil {
+		return err
+	}
+
 	a.sessSvc = service.NewSessionService(a.store, a.jwtSvc)
 
 	a.publisher, err = events.NewPublisher(events.PublisherConfig{
@@ -118,7 +195,7 @@ func (a *Agent) Start(ctx context.Context) error {
 		return err
 	}
 
-	a.logger.Info("starting session-agent", "queue", a.config.AMQP.Queue)
+	a.logger.Info("starting session-agent", "queue", a.config.AMQP.Queue, "algorithm", "ES256")
 	go a.subscriber.Start(ctx)
 	return nil
 }

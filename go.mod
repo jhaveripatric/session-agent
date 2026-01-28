@@ -41,4 +41,4 @@ require (
 	google.golang.org/protobuf v1.36.10 // indirect
 )
 
-replace github.com/jhaveripatric/go-agent-kit => ../go-agent-kit
+replace github.com/jhaveripatric/go-agent-kit => ../../go-agent-kit

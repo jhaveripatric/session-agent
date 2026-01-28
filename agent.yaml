@@ -1,6 +1,6 @@
 name: session-agent
 version: 1.0.0
-description: JWT session management agent for authentication
+description: JWT session management with ES256 asymmetric signing
 category: security
 license: MIT
 repository: https://github.com/jhaveripatric/session-agent
@@ -8,6 +8,13 @@ repository: https://github.com/jhaveripatric/session-agent
 author:
   name: jhaveripatric
   email: pratik@agenteco.io
+
+jwt:
+  algorithm: ES256
+  issuer: agenteco
+  audience: agent-gateway
+  key_id: session-agent-v1
+  public_key_path: ./keys/public.pem
 
 events:
   subscribes:
@@ -23,18 +30,84 @@ dependencies:
   - rabbitmq
 
 config:
-  - name: JWT_SECRET
+  - name: JWT_PRIVATE_KEY_PATH
     required: true
-    description: Secret key for JWT signing
+    description: Path to ES256 private key
+  - name: JWT_PUBLIC_KEY_PATH
+    required: true
+    description: Path to ES256 public key
   - name: JWT_ISSUER
     default: agenteco
     description: JWT issuer claim
-  - name: JWT_EXPIRY_MINS
-    default: "60"
-    description: Token expiry in minutes
+  - name: JWT_ACCESS_EXPIRY
+    default: "15m"
+    description: Access token expiry duration
 
 tags:
   - authentication
   - jwt
   - session
   - security
+  - es256
+
+actions:
+  - name: login
+    description: Authenticate user and create session
+    http:
+      method: POST
+      path: /auth/login
+    auth: none
+    rate_limit: 10/minute/ip
+    timeout: 5s
+    request:
+      event: io.agenteco.auth.login.requested.v1
+      schema:
+        type: object
+        properties:
+          username:
+            type: string
+            minLength: 3
+            maxLength: 100
+          password:
+            type: string
+            minLength: 1
+            maxLength: 100
+        required: [username, password]
+    response:
+      success:
+        event: io.agenteco.auth.session.created.v1
+        status: 200
+      failure:
+        event: io.agenteco.auth.session.invalid.v1
+        status: 401
+
+  - name: validate
+    description: Validate session token
+    http:
+      method: POST
+      path: /auth/validate
+    auth: bearer
+    timeout: 5s
+    request:
+      event: io.agenteco.auth.session.validate.v1
+    response:
+      success:
+        event: io.agenteco.auth.session.valid.v1
+        status: 200
+      failure:
+        event: io.agenteco.auth.session.invalid.v1
+        status: 401
+
+  - name: logout
+    description: End session
+    http:
+      method: POST
+      path: /auth/logout
+    auth: bearer
+    timeout: 5s
+    request:
+      event: io.agenteco.auth.logout.requested.v1
+    response:
+      success:
+        event: io.agenteco.auth.session.ended.v1
+        status: 200
