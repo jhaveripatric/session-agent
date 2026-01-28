@@ -108,11 +108,11 @@ func (a *Agent) Start(ctx context.Context) error {
 
 	a.handlers = handlers.NewLoginHandler(a.sessSvc, a.publisher, a.logger)
 
-	// Subscribe to auth events
+	// Subscribe to auth events (use extracted routing keys, not full event types)
 	routingKeys := []string{
-		"io.agenteco.auth.login.requested.v1",
-		"io.agenteco.auth.session.validate.v1",
-		"io.agenteco.auth.logout.requested.v1",
+		"auth.login.requested",
+		"auth.session.validate",
+		"auth.logout.requested",
 	}
 	if err := a.subscriber.SubscribeMultiple(routingKeys, a.handleEvent); err != nil {
 		return err
